@@ -189,6 +189,57 @@ fluentd -c etc/fluent.conf -vv
 </match>
 ```
 
+### 7-3. S3 용 도커 빌드
+* 도커 파일 생성 시에 fluent-plugin-s3 를 추가
+```bash
+FROM fluent/fluentd:v1.10-debian-1
+
+# Use root account to use apt
+USER root
+
+# below RUN includes plugin as examples elasticsearch is not required
+# you may customize including plugins as you wish
+RUN buildDeps="sudo make gcc g++ libc-dev" \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends $buildDeps \
+ && sudo gem install fluent-plugin-elasticsearch \
+ && sudo gem install fluent-plugin-s3 \
+ && sudo gem sources --clear-all \
+ && SUDO_FORCE_REMOVE=yes \
+    apt-get purge -y --auto-remove \
+                  -o APT::AutoRemove::RecommendsImportant=false \
+                  $buildDeps \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /tmp/* /var/tmp/* /usr/lib/ruby/gems/*/cache/*.gem
+
+COPY fluent.conf /fluentd/etc/
+COPY entrypoint.sh /bin/
+
+USER fluent
+``` 
+* 실행 시에 
+```bash 아래와 같이 볼륨을 설정
+sudo docker run \
+    --name s3-fluentd \
+    -p 24224:24224 \
+    -p 24224:24224/udp \
+    -p 8888:8888 \
+    -v `pwd`/logs:/fluentd/log \
+    -v `pwd`/s3:/var/log/fluent/s3 \
+    -v `pwd`/etc:/fluentd/etc \
+    -v `pwd`/plugins:/fluentd/plugins \
+    -v `pwd`/source:/fluentd/source \
+    -v `pwd`/target:/fluentd/target \
+    -dit s3-fluentd
+
+# entrypoint.sh 권한이 없어서 실패 
+$ chmod +x entrypoint.sh
+
+# [error]: #0 unexpected error error_class=Errno::EACCES error="Permission denied @ dir_s_mkdir - /var/log/fluent"
+$ chmod 777 ./s3
+
+```
+
 
 
 ## 7. 에어플로우 설치
