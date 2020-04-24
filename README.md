@@ -241,11 +241,122 @@ $ chmod 777 ./s3
 ```
 
 
-
 ## 7. 에어플로우 설치
+> EC2 환경의 도커에서 에어플로우를 설치하고 Bash 및 [Python Operator](https://airflow.apache.org/docs/stable/howto/operator/python.html) 실습을 합니다
 
-## 7-1. 에어플로우 연동을 통한 수집
+### 7-1. 도커상에서 에어플로우 설치 및 연동
+* 도커 및 에어플로우 컨테이너 기동
+```bash
+$ git clone https://github.com/puckel/docker-airflow
+$ cd docker-airflow
+$ docker pull puckel/docker-airflow
+$ docker-compose -f docker-compose-LocalExecutor.yml up -d # 이미지 생성후 컨테이너 시작
+$ docker ps
+```
+* 네트워크 보안 설정에서 "보안 그룹"에 인바운트 포트로 8080 포트를 추가 후 접근
 
+### 7-2. 도커 에어플로우 상에서 배시 스크립트로 헬로월드 출력하기
+* 현재 설정되어 있는 DAGs 를 확인합니다
+* [Airflow Command Line Interface Reference](https://airflow.apache.org/docs/stable/cli-ref.html)
+* [Airflow FAQ](https://airflow.apache.org/docs/stable/faq.html)
+```bash
+$ sudo docker exec -it docker-airflow_webserver_1 airflow list_dags
+```
+* 아래는 sqlalchemy 라이브러리가 docker 이미지에 없어서 발생하는 오류 SQLAlchemy 추가 다시 빌드하면 해결 할 수 있습니다
+  * [parameters: (1, 'default_pool', 1, 0)]
+  * (Background on this error at: http://sqlalche.me/e/e3q8)
+```bash
+... 생략
+	&& pip install SQLAlchemy==1.3.15 \ 
+... 생략
+```
+
+* dags 경로에 파일 생성 후 리로딩은 기본 5분 - Admin Configuration 설정 변경
+```bash
+# How often (in seconds) to scan the DAGs directory for new files. Default to 5 minutes.
+dag_dir_list_interval = 300
+```
+* 실행 결과는 Browse - Detail - success (8) - Log Url 클릭으로 확인할 수 있습니다
+
+### 7-3. 도커 에어플로우 상에서 파이썬 스크립트로 웹크롤링 하기
+* 아래와 같이 requests 라이브러리를 이용한 간단한 웹크롤링을 수행합니다
+* [Requests: HTTP for Humans](https://requests.readthedocs.io/en/master/) 참고
+```python
+from airflow.models import DAG
+from airflow.utils.dates import days_ago
+from airflow.operators.python_operator import PythonOperator
+import time
+import requests
+from pprint import pprint
+
+args = {'owner': 'psyoblade',
+        'start_date': days_ago(n=1)}
+
+dag = DAG(dag_id='my_python_crawler',
+          default_args=args,
+          schedule_interval='@daily')
+
+def crawl_web(url, **kwargs):
+    pprint(url)
+    r = requests.get(url)
+    pprint(r.content)
+    pprint(kwargs)
+
+t1 = PythonOperator(task_id='task_1',
+                    provide_context=True,
+                    python_callable=crawl_web,
+                    op_kwargs={'url': 'http://unhackathon.org/'},
+                    dag=dag)
+
+t1
+```
+* 현재 등록된 dag 를 확인합니다 
+```bash
+sudo docker exec -it docker-airflow\_webserver\_1 airflow list\_dags
+```
+
+
+### 7-4. 로컬 환경에서 파이썬 스크립트로 S3 저장하기
+* [Boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/quickstart.html) 를 설치합니다
+```bash
+$ pip install boto3
+
+# 아래와 같은 오류가 나는 경우 업그레이드가 필요합니다
+# TypeError: _send_request() takes 5 positional arguments but 6 were given 
+
+$ pip install --upgrade boto3
+```
+* 버킷 목록을 출력하는 예제
+```python
+import boto3
+s3 = boto3.resource('s3')
+for bucket in s3.buckets.all():
+	print(bucket.name)
+```
+* 간단한 이미지를 업로드 하는 예제
+```python
+import boto3
+s3 = boto3.resource('s3')
+data = open('images/boto3.png', 'rb')
+s3.Bucket('psyoblade-fluentd').put_object(Key='boto3.png', Body=data) 
+```
+
+### 7.5 도커 에어플로우 환경에서 파이썬 스크립트를 통한 S3 저장하기
+* boto3 모듈이 없기 때문에 아래와 같은 오류가 발생할 수 있습니다
+  * Broken DAG: [/usr/local/airflow/dags/upload.py] No module named 'boto3'
+* [puckel/docker-airflow/Dockerfile](https://github.com/puckel/docker-airflow/blob/master/Dockerfile) 의 아래 내용을 수정하고 빌드합니다
+  * docker build --rm -t psyoblade/docker-airflow .
+```bash
+... 생략
+&& pip install SQLAlchemy==1.3.15 \
+&& pip install boto3 \
+&& pip install apache-airflow[crypto,celery,postgres,hive,jdbc,mysql,aws,ssh${AIRFLOW_DEPS:+,}${AIRFLOW_DEPS}]==${AIRFLOW_VERSION} \j
+... 생략
+```
+* docker-compose-CustomExecutor.yml	파일을 새로 생성하고 도커 컴포즈를 통한 컨테이너를 띄웁니다
+```bash
+docker-compose -f docker-compose-CustomExecutor.yml up -d
+```
 
 
 
